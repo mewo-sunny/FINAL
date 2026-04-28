@@ -1,12 +1,12 @@
-import React, { useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Switch } from "react-native";
+import React, { useCallback, useRef } from "react";
+import { View, Text, StyleSheet, ScrollView, Pressable, Switch, AccessibilityInfo } from "react-native";
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Speech from 'expo-speech';
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 // 1. Import Gesture Handler components
-import { PanGestureHandler, State, PanGestureHandlerEventPayload, HandlerStateChangeEvent } from 'react-native-gesture-handler';
+import { PanGestureHandler, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { useAppTheme } from "./context/ThemeContext";
 
@@ -14,17 +14,22 @@ export default function SettingsScreen() {
     const router = useRouter();
     const { isDarkMode, theme, toggleTheme } = useAppTheme();
     const [isAutoRead, setIsAutoRead] = React.useState(true);
+    // Guard: onGestureEvent fires every frame, so we need to prevent multiple back() calls
+    const hasFiredRef = useRef(false);
 
     useFocusEffect(
         useCallback(() => {
-            Speech.speak("Settings Menu");
+            AccessibilityInfo.announceForAccessibility('Settings. Swipe down to close.');
+            Speech.speak('Settings Menu');
             return () => Speech.stop();
         }, [])
     );
 
-    // 2. Gesture Logic: If swipe distance Y is > 100, go back
+    // 2. Gesture Logic: swipe down to dismiss — guard against repeated calls
     const onGestureEvent = (event: any) => {
+        if (hasFiredRef.current) return;
         if (event.nativeEvent.translationY > 100) {
+            hasFiredRef.current = true;
             router.back();
         }
     };
@@ -91,6 +96,10 @@ export default function SettingsScreen() {
                     <Pressable 
                         style={styles.backButton} 
                         onPress={() => router.back()}
+                        accessible={true}
+                        accessibilityRole="button"
+                        accessibilityLabel="Close settings"
+                        accessibilityHint="Double tap to dismiss and return to Home"
                     >
                         <Text style={[styles.backText, { color: theme.subtext }]}>Swipe down or tap to close</Text>
                     </Pressable>

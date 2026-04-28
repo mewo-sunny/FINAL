@@ -36,3 +36,4 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
 // Custom hook to use the theme anywhere
 export const useAppTheme = () => useContext(ThemeContext);
+export default ThemeProvider; // or whatever your main component name is

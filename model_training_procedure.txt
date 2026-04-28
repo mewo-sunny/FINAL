@@ -1,0 +1,82 @@
+# Currency Detector Model: Training Procedure
+
+This document outlines the end-to-end pipeline used to prepare the dataset and train the YOLO-based machine learning model for the NoteVision app.
+
+## 1. Image Segregation and Dataset Preparation
+
+The dataset preparation was automated using a Python script (`split.py`) to ensure consistency and proper YOLO formatting.
+
+*   **Source Data:** The raw images were initially placed inside a source directory named `inr_images`, organized into 12 distinct class folders representing various Indian Rupee denominations and orientations (e.g., `Rs.10`, `Rs.500`, `reverse`, etc.).
+*   **Train/Validation Split:** The script iterates through each class folder, shuffles the images randomly, and splits them into an 80% Training set and a 20% Validation set.
+*   **File Renaming & Copying:** To prevent file naming conflicts, each image is renamed with its class name as a prefix (e.g., `Rs10_image1.jpg`) before being copied into the final `inr_dataset/train/images` and `inr_dataset/val/images` directories.
+*   **Generating YOLO Labels (.txt):** Since the images were pre-cropped or represented single notes, the script automatically generates YOLO label files (`.txt` files) for each image. It assigns the corresponding class index and sets the bounding box to cover the entire image (coordinates: `0.5 0.5 1.0 1.0`).
+
+## 2. Creating data.yaml
+
+Once the images and labels are properly segregated, the script programmatically generates the `data.yaml` file required by the Ultralytics YOLO framework. 
+
+This file acts as the map for the training process and contains:
+*   Absolute paths to the `train` and `val` image directories.
+*   `nc: 12` (Number of classes).
+*   `names: [...]` (An array mapping the class index to the actual string name of the currency).
+
+## 3. Training the Model (Detailed Breakdown)
+
+The actual training process (`train.py` and `start_training` functions) uses Ultralytics YOLOv11. Here is a deep dive into exactly what happens under the hood when the training starts:
+
+### A. Transfer Learning & Base Model
+Instead of training a model from scratch (which requires millions of images), the script starts with `yolo11s.pt`. This is a "small" version of the YOLOv11 model that has already been trained on the COCO dataset (common objects in context). It already understands how to see edges, shapes, and textures. The training process essentially "retrains" the final layers of this brain to forget about cars and dogs, and focus entirely on the 12 classes of Indian Currency.
+
+### B. The Training Loop (Epochs & Batches)
+*   **Epochs (`epochs=150`):** An epoch is one complete pass through the entire training dataset (all 80% of your images). Doing this 150 times gives the model enough repetition to learn the features of the currency notes.
+*   **Patience (`patience=30`):** This is an Early Stopping mechanism. If the model's accuracy on the validation set doesn't improve for 30 consecutive epochs, training stops automatically. This prevents "overfitting" (where the model memorizes the training images but fails on new, unseen images).
+*   **Batches (`batch=12`):** Instead of looking at one image at a time, or all images at once, the model looks at 12 images simultaneously. It calculates the errors for these 12 images, averages them, and updates its internal weights. Capping this at 12 prevents the RTX 3060's VRAM (Video RAM) from overflowing.
+
+### C. Data Augmentation (Making the Model Robust)
+To ensure the app works in real-world conditions (bad lighting, crinkled notes, different angles), the script forces the model to learn from altered versions of the images on the fly during training:
+*   **HSV (`hsv_h=0.015`, `hsv_s=0.7`, `hsv_v=0.4`):** Randomly tweaks the Hue, Saturation, and Value (brightness) of the images. This forces the model to rely on patterns rather than exact colors, making it work in both sunny and dim environments.
+*   **Rotation (`degrees=15.0`):** Randomly rotates images up to 15 degrees so the user doesn't have to hold their phone perfectly straight.
+*   **Mosaic (`mosaic=1.0`):** Takes 4 different images and stitches them together into one single image. This teaches the model to detect smaller notes and notes in complex backgrounds.
+*   **Mixup (`mixup=0.2`):** Blends two images together with varying transparency. This helps the model generalize better when there is visual noise or overlapping objects.
+
+### D. System Stability & Memory Management
+Processing thousands of images puts immense strain on the hardware. 
+*   **`workers=0` & `cache=False`:** On Windows, using multiple CPU workers for data loading can cause multiprocessing crashes (`FreezeSupport` errors). Setting `workers=0` forces the data to load on the main thread safely. Setting `cache=False` prevents the system from trying to load all 10,000 images into RAM, which would cause a `MemoryError`.
+*   **`amp=False`:** Disables Automatic Mixed Precision. While AMP can speed up training, it can sometimes cause unstable VRAM usage spikes on certain GPUs. Disabling it trades a bit of speed for guaranteed stability.
+
+### E. Loss Calculation and Updates
+During training, the model looks at an image, draws a box, and predicts the class (e.g., "This is Rs.500 with 60% confidence"). It then compares this to the actual `.txt` label you generated. The difference between its guess and the truth is the **Loss**. The YOLO algorithm uses Backpropagation to tweak its millions of internal parameters (weights) to reduce this Loss in the next batch.
+
+### F. Exporting & Quantization (Mobile Readiness)
+Once training finishes, the model is a `.pt` (PyTorch) file, which is too heavy for a mobile phone.
+*   **Format (`tflite`):** The model is converted to TensorFlow Lite, the standard format for running ML on Android/iOS.
+*   **Quantization (`int8=True`):** Neural networks usually store numbers as 32-bit floats. Quantization compresses these into 8-bit integers. This drastically shrinks the file size (e.g., from 80MB down to ~20MB) and speeds up inference on mobile processors, at the cost of a tiny, barely noticeable drop in accuracy.
+*   **NMS (`nms=True`):** Non-Maximum Suppression is baked directly into the model. If the model draws 5 overlapping boxes for one Rs. 100 note, the NMS logic inside the model will automatically filter it down to the single best box before sending the result to the React Native frontend.
+
+## 4. Viva Questions (Model & Training)
+
+Here are comprehensive viva questions you might be asked regarding the machine learning model and its training process:
+
+**Q1: Why did you use Transfer Learning (starting with YOLOv11s) instead of training a model from scratch?**
+*Answer:* Training from scratch requires massive datasets (millions of images) and immense computing power to teach the model basic shapes and edges. By using a pre-trained YOLOv11 small model, it already understands basic visual features. We only need to "fine-tune" the final layers to recognize Indian Currency, which saves time, compute resources, and requires far less data.
+
+**Q2: What is the purpose of the `data.yaml` file in YOLO?**
+*Answer:* The `data.yaml` acts as the configuration map for the dataset. It tells the YOLO training script exactly where to find the `train` and `val` image folders, how many classes there are (`nc: 12`), and provides the human-readable names for each class index so the model can map predictions to labels like "Rs. 500".
+
+**Q3: How did you prevent the model from overfitting?**
+*Answer:* We used an Early Stopping mechanism (`patience=30`). This monitors the model's performance on the validation set (the 20% of images it hasn't seen during training). If the accuracy on the validation set stops improving for 30 consecutive epochs, training halts. Additionally, heavy data augmentations (like mosaic and mixup) force the model to generalize rather than memorize.
+
+**Q4: Can you explain why you used a batch size of 12 and `amp=False`?**
+*Answer:* Training on a dataset of over 10,000 images requires significant Video RAM (VRAM). A smaller batch size of 12 ensures that the RTX 3060's VRAM doesn't overflow. Setting `amp=False` (Automatic Mixed Precision) prevents unexpected VRAM usage spikes that can crash the training process, prioritizing stability over minor speed gains.
+
+**Q5: What are Data Augmentations and why did you use `mosaic` and `mixup`?**
+*Answer:* Data augmentation modifies the training images on the fly to make the model robust against real-world imperfections. `Mosaic` stitches 4 images together, helping the model detect currency in complex backgrounds or when notes are small. `Mixup` blends two images together with transparency, which trains the model to handle visual noise and overlapping objects.
+
+**Q6: What is INT8 Quantization and why is it necessary for your mobile app?**
+*Answer:* Standard neural networks use 32-bit floating-point numbers (`float32`), making the resulting `.pt` file very large and computationally heavy. INT8 Quantization compresses these weights into 8-bit integers. This drastically reduces the file size (making it suitable for an app bundle) and allows it to run much faster on mobile processors via TFLite, with a negligible drop in accuracy.
+
+**Q7: Why did you bake NMS (`nms=True`) directly into the exported TFLite model?**
+*Answer:* Non-Maximum Suppression (NMS) filters out duplicate bounding boxes for the same object. By embedding NMS directly into the exported model, the React Native frontend doesn't have to perform complex, CPU-intensive IOU (Intersection-Over-Union) math in JavaScript. The TFLite model outputs clean, filtered boxes automatically, saving battery and improving FPS.
+
+**Q8: Explain the difference between your Training set (80%) and Validation set (20%).**
+*Answer:* The Training set is used to actively teach the model; it uses these images to calculate Loss and update its weights. The Validation set is kept hidden during the learning phase. After each epoch, the model is tested on the Validation set to see how well it performs on unseen data, which helps gauge its real-world accuracy and triggers early stopping if it begins to overfit.

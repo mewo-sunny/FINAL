@@ -1,14 +1,23 @@
 import React, { useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, Pressable, Animated, Platform } from 'react-native';
+import { StyleSheet, Text, View, Pressable, Animated, Platform, AccessibilityInfo } from 'react-native';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 
-// 1. IMPORT GLOBAL THEME
 import { useAppTheme } from '../context/ThemeContext';
 
-export default function HomeContent() {
-  // 2. USE GLOBAL THEME HOOK
+const UI_LABELS = {
+  scan: 'SCAN',
+  help: 'HELP',
+  settings: 'SETTINGS',
+};
+
+// isActive is passed from _layout.tsx so we know when this PagerView page is visible
+interface HomeContentProps {
+  isActive: boolean;
+}
+
+export default function HomeContent({ isActive }: HomeContentProps) {
   const { theme, isDarkMode } = useAppTheme();
 
   const logoScale = useRef(new Animated.Value(1)).current;
@@ -30,42 +39,116 @@ export default function HomeContent() {
     }).start();
   }, []);
 
+  // useEffect on isActive (not useFocusEffect) because this screen lives inside
+  // PagerView — it never gets a React Navigation focus event on page swipe.
+  useEffect(() => {
+    let talkBackTimer: ReturnType<typeof setTimeout>;
+    let speechTimer: ReturnType<typeof setTimeout>;
+    // Reminder: fires after 8 s idle, then repeats every 15 s
+    let reminderTimer: ReturnType<typeof setTimeout>;
+    let reminderInterval: ReturnType<typeof setInterval>;
+
+    if (isActive) {
+      // Delay TalkBack announcement ~400 ms so it fires after PagerView's own
+      // page-change event (otherwise the announcement is silently swallowed).
+      talkBackTimer = setTimeout(() => {
+        AccessibilityInfo.announceForAccessibility(
+          'NoteVision Home. Swipe right to Scan, swipe left for Help, swipe down for Settings.'
+        );
+      }, 400);
+
+      // Give TalkBack's announcement a head-start before Speech.speak takes over.
+      speechTimer = setTimeout(() => {
+        Speech.speak(
+          `NoteVision Home Hub. Swipe right to ${UI_LABELS.scan.toLowerCase()}, left for ${UI_LABELS.help.toLowerCase()}, or down for ${UI_LABELS.settings.toLowerCase()}.`,
+          { language: 'en-IN', rate: 0.85 }
+        );
+      }, 500);
+
+      // After 8 seconds of inactivity, remind the user how to navigate.
+      // Then repeat the reminder every 15 seconds until they leave.
+      const speakReminder = () => {
+        Speech.speak(
+          `Swipe left to scan a note. Swipe right for help. Swipe down for settings.`,
+          { language: 'en-IN', rate: 0.9 }
+        );
+      };
+      reminderTimer = setTimeout(() => {
+        speakReminder();
+        reminderInterval = setInterval(speakReminder, 15000);
+      }, 8000);
+
+    } else {
+      Speech.stop();
+    }
+
+    return () => {
+      clearTimeout(talkBackTimer);
+      clearTimeout(speechTimer);
+      clearTimeout(reminderTimer);
+      clearInterval(reminderInterval);
+    };
+  }, [isActive]);
+
   const handleManualSpeak = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Speech.stop();
-    Speech.speak("NoteVision Home Hub. Swipe right to scan, left for help, or down for settings.", {
-      language: 'en-IN',
-      rate: 0.85
-    });
+    Speech.speak(
+      `NoteVision Home Hub. Swipe right to ${UI_LABELS.scan.toLowerCase()}, left for ${UI_LABELS.help.toLowerCase()}, or down for ${UI_LABELS.settings.toLowerCase()}.`,
+      { language: 'en-IN', rate: 0.85 }
+    );
   };
 
   return (
-    // 3. BACKGROUND UPDATES DYNAMICALLY
-    <View style={[styles.container, { backgroundColor: theme.background }]}>
-
-      <Animated.View style={[styles.settingsHint, { opacity: hintOpacity }]}>
-        <Ionicons name="chevron-down" size={24} color={isDarkMode ? "#444" : "#BBB"} />
-        <Text style={[styles.hintText, { color: isDarkMode ? "#444" : "#BBB" }]}>SETTINGS</Text>
+    <View
+      style={[styles.container, { backgroundColor: theme.background }]}
+      accessible={false}
+    >
+      {/* Settings hint arrow — decorative, hidden from TalkBack */}
+      <Animated.View
+        style={[styles.settingsHint, { opacity: hintOpacity }]}
+        accessible={false}
+        importantForAccessibility="no"
+      >
+        <Ionicons name="chevron-down" size={24} color={isDarkMode ? '#444' : '#BBB'} />
+        <Text style={[styles.hintText, { color: isDarkMode ? '#444' : '#BBB' }]}>
+          {UI_LABELS.settings}
+        </Text>
       </Animated.View>
 
-      {/* LEFT: SCAN */}
-      <View style={styles.sideZone}>
+      {/* LEFT: SCAN indicator */}
+      <View
+        style={styles.sideZone}
+        accessible={true}
+        accessibilityLabel="Swipe right to open the Scanner"
+        importantForAccessibility="yes"
+      >
         <Ionicons name="chevron-back" size={32} color={theme.tint} />
-        <Text style={[styles.label, { color: theme.tint, marginTop: 5, marginBottom: 5 }]}>SCAN</Text>
+        <Text style={[styles.label, { color: theme.tint, marginTop: 5, marginBottom: 5 }]}>
+          {UI_LABELS.scan}
+        </Text>
       </View>
 
-      {/* CENTER: LOGO & STATUS */}
-      <Pressable style={styles.centerPoint} onPress={handleManualSpeak}>
+      {/* CENTER: Logo & tap-to-repeat button */}
+      <Pressable
+        style={styles.centerPoint}
+        onPress={handleManualSpeak}
+        accessible={true}
+        accessibilityRole="button"
+        accessibilityLabel="NoteVision logo"
+        accessibilityHint="Double tap to hear navigation instructions"
+      >
         <Animated.View
           style={[
             styles.nvCircle,
             {
               borderColor: theme.tint,
-              backgroundColor: theme.card, // USES THEME CARD COLOR
+              backgroundColor: theme.card,
               shadowColor: theme.tint,
-              transform: [{ scale: logoScale }]
-            }
+              transform: [{ scale: logoScale }],
+            },
           ]}
+          accessible={false}
         >
           <Text style={[styles.nvText, { color: theme.text }]}>NV</Text>
         </Animated.View>
@@ -74,18 +157,28 @@ export default function HomeContent() {
           NOTE<Text style={{ color: theme.tint }}>VISION</Text>
         </Text>
 
-        <View style={[styles.statusBadge, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <View
+          style={[styles.statusBadge, { backgroundColor: theme.card, borderColor: theme.border }]}
+          accessible={true}
+          accessibilityLabel="Status: Ready to scan"
+        >
           <View style={[styles.statusDot, { backgroundColor: '#00FF00' }]} />
           <Text style={[styles.statusText, { color: theme.subtext }]}>Start Scanning</Text>
         </View>
       </Pressable>
 
-      {/* RIGHT: HELP */}
-      <View style={styles.sideZone}>
+      {/* RIGHT: HELP indicator */}
+      <View
+        style={styles.sideZone}
+        accessible={true}
+        accessibilityLabel="Swipe left to open Help"
+        importantForAccessibility="yes"
+      >
         <Ionicons name="chevron-forward" size={32} color={theme.subtext} />
-        <Text style={[styles.label, { color: theme.subtext, marginTop: 5, marginBottom: 5 }]}>HELP</Text>
+        <Text style={[styles.label, { color: theme.subtext, marginTop: 5, marginBottom: 5 }]}>
+          {UI_LABELS.help}
+        </Text>
       </View>
-
     </View>
   );
 }
@@ -105,5 +198,5 @@ const styles = StyleSheet.create({
   statusBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 15, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1 },
   statusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 8 },
   statusText: { fontSize: 10, fontWeight: '800', letterSpacing: 1 },
-  label: { fontSize: 13, fontWeight: '900' }
+  label: { fontSize: 13, fontWeight: '900' },
 });

@@ -12,6 +12,11 @@ import ScannerScreen from './scan';
 import HomeContent from './HomeContent'; 
 import HelpScreen from './help';            
 
+const PAGE_TITLES = ["Scanner", "Home Hub", "Help Center"];
+const BUTTON_LABELS = {
+  settings: "SETTINGS"
+};
+
 export default function MainController() {
   const [currentPage, setCurrentPage] = useState(1);
   const router = useRouter();
@@ -22,9 +27,8 @@ export default function MainController() {
   const handlePageChange = useCallback((index: number) => {
     setCurrentPage(index);
     
-    const announcements = ["Scanner", "Home Hub", "Help Center"];
     Speech.stop();
-    Speech.speak(announcements[index]);
+    Speech.speak(PAGE_TITLES[index]);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   }, []);
 
@@ -34,15 +38,20 @@ export default function MainController() {
       <PagerView 
         style={styles.pagerView} 
         initialPage={1}
+        onPageScrollStateChanged={(e) => {
+          if (e.nativeEvent.pageScrollState === 'dragging') {
+             Speech.stop();
+          }
+        }}
         onPageSelected={(e) => handlePageChange(e.nativeEvent.position)}
       >
-        <View key="0" style={styles.page}><ScannerScreen /></View>
+        <View key="0" style={styles.page}><ScannerScreen isActive={currentPage === 0} /></View>
         
         <View key="1" style={styles.page}>
-          <HomeContent />
+          <HomeContent isActive={currentPage === 1} />
         </View>
 
-        <View key="2" style={styles.page}><HelpScreen /></View>
+        <View key="2" style={styles.page}><HelpScreen isActive={currentPage === 2} /></View>
       </PagerView>
 
       {/* Persistent Overlay Button */}
@@ -65,7 +74,7 @@ export default function MainController() {
           }}
         >
           {/* 5. Update text color to match the tint */}
-          <Text style={[styles.settingsText, { color: theme.tint }]}>⚙️ SETTINGS</Text>
+          <Text style={[styles.settingsText, { color: theme.tint }]}>⚙️ {BUTTON_LABELS.settings}</Text>
         </Pressable>
       )}
     </View>

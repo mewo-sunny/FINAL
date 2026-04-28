@@ -1,0 +1,62 @@
+# NoteVision: Software Architecture & Viva Guide
+
+## 1. How This Software Works
+
+NoteVision is a React Native mobile application built with the Expo ecosystem, designed to assist visually impaired users by detecting currency notes in real-time. 
+
+Here is the step-by-step workflow of the core functionality:
+1. **Camera Feed:** The app uses `react-native-vision-camera` to capture live video frames efficiently.
+2. **Frame Pre-processing:** Captured frames are immediately passed to `expo-image-manipulator` where they are resized strictly to 640x640 pixels and converted into a flat array of RGB values to match the input requirements of the machine learning model.
+3. **Local ML Inference:** The processed image data is fed into a local TensorFlow Lite object detection model using `react-native-fast-tflite`. This runs entirely on the device (offline) for privacy and speed.
+4. **Post-processing (NMS):** The model outputs bounding boxes and confidence scores. The app applies Non-Maximum Suppression (NMS) (calculating Intersection-Over-Union) to filter out duplicate boxes for the same currency note.
+5. **Multi-Note Tracking:** To handle multiple notes, detections are tracked across frames in a short buffer using spatial coordinates. This prevents flickering and accurately counts multiple notes of the same denomination.
+6. **Auditory Feedback:** Finally, the grouped detections are synthesized into natural language (e.g., "Detected 2 Ten Rupees") and spoken aloud using `expo-speech`.
+
+## 2. How the Screens Communicate
+
+The application uses a combination of modern routing and context providers to manage state and navigation across screens:
+
+- **Routing Engine:** The app uses `expo-router` for filesystem-based routing. The main interface is wrapped in a `Stack` navigator (`_layout.tsx`), while specific flows like the settings modal are pushed over the main stack.
+- **Swipe Navigation (PagerView):** Instead of standard buttons or tabs, the three primary screens (Scanner, Home, Help) are contained within a `PagerView` (`index.tsx`). This allows the user to swipe left or right to change screens.
+- **Event-Driven Coordination:** As the user swipes between screens inside the `PagerView`, native events (`onPageScrollStateChanged`, `onPageSelected`) are fired. These events are used to trigger cross-screen actions, such as immediately stopping the Text-to-Speech engine when dragging starts, and announcing the new screen's name when the swipe completes.
+- **Global State Management:** Data that needs to be accessed by all screens (like the Light/Dark Theme preference) is managed via React's Context API (`ThemeContext.tsx`). The `ThemeProvider` wraps the entire app, so when a user changes the theme in the Settings screen, the change propagates instantly to all other screens without needing to pass props down manually.
+
+## 3. Viva Questions (Based on Project Implementation)
+
+Here are several technical questions you might be asked during a viva, along with the concepts they target:
+
+**Q1: Why did you choose React Native and Expo for this project instead of native Android (Java/Kotlin) or iOS (Swift)?**
+*Focus:* Cross-platform development, development speed, and access to modern JS libraries while still utilizing native modules like vision-camera.
+
+**Q2: Explain the purpose of Non-Maximum Suppression (NMS) in your `scan.tsx` file.**
+*Focus:* Object detection models often draw multiple overlapping boxes for a single object. NMS calculates the Intersection-Over-Union (IOU) to keep only the highest-confidence bounding box and suppress the redundant ones.
+
+**Q3: How do you prepare a camera frame before feeding it into the TensorFlow Lite model?**
+*Focus:* Discussing the need to resize the image to exactly 640x640, decoding the JPEG into raw bytes, and formatting it into a Float32Array so the mathematical model can process it.
+
+**Q4: Your app supports Multi-Note Detection. How do you distinguish between two separate "Ten Rupee" notes versus the model flickering on a single note?**
+*Focus:* Explain the spatial tracking logic. You create a unique key based on the label and its X/Y coordinates divided into a grid. If a new detection falls in a different grid sector, it's treated as a second note.
+
+**Q5: How is navigation handled between the main screens, and how does it integrate with accessibility features?**
+*Focus:* Discussing `PagerView` for swipe gestures and how `onPageSelected` is hooked into `Speech.speak()` to announce the current screen for visually impaired users.
+
+**Q6: What is the benefit of managing your Theme globally via `ThemeContext`?**
+*Focus:* It avoids prop-drilling. It allows a deep nested component (like the settings modal) to toggle a state that instantly triggers a re-render of the background colors across all mounted screens.
+
+**Q7: How do you ensure the app remains responsive and the UI doesn't freeze while running heavy ML calculations?**
+*Focus:* Using fast native bindings (`react-native-fast-tflite`), executing the camera frame processing asynchronously, and leveraging the CPU/NNAPI delegates efficiently so the main JavaScript thread isn't blocked.
+
+**Q8: Why did you choose React Native over Flutter for this project?**
+*Focus:* Discuss the vast JavaScript ecosystem, the ability to use specialized libraries like `react-native-vision-camera` and `react-native-fast-tflite`, and React Native's JSI (JavaScript Interface) allowing direct integration with native device features, which is critical for real-time camera processing. While Flutter is great for UI, React Native often has an edge when relying heavily on complex, low-level native modules that exist in the JS/React ecosystem.
+
+**Q9: Why use Expo instead of a bare React Native CLI project?**
+*Focus:* Expo provides out-of-the-box routing (`expo-router`), simplifies the build process, and offers robust pre-configured native modules (like `expo-speech`, `expo-image-manipulator`, and `expo-haptics`) without dealing with complex native Android/iOS linking manually. It drastically accelerates development.
+
+**Q10: What are the security and privacy implications of your app's architecture?**
+*Focus:* The ML model runs completely offline on the user's local device. No camera feeds or images are ever sent to a cloud server for processing. This ensures complete data privacy, eliminates network latency, and allows the app to function flawlessly without an internet connection.
+
+**Q11: How does your app handle accessibility, considering the target audience is visually impaired users?**
+*Focus:* The entire UX is designed around large physical swipe gestures using `PagerView` rather than precise button taps. `expo-speech` provides constant auditory feedback, announcing the current screen and reading out real-time currency detections. Additionally, `expo-haptics` gives physical vibrational feedback upon interactions.
+
+**Q12: If you were to scale or improve this project in the future, what would be your next steps?**
+*Focus:* Mention adding support for more global currencies, improving the TFLite model's accuracy through expanded dataset training, moving the frame processing entirely to a native Vision Camera Frame Processor (using C++ / JSI) to bypass the JS thread for even higher FPS, or adding real-time exchange rate calculation via an API.
